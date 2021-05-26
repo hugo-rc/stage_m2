@@ -19,17 +19,22 @@ import pickle
 
 
 class mixing_layer_detection():
-    def __init__(self, path):
+    def __init__(self, path, load):
         self.path=os.path.abspath(path)
-        self.files=self.importation(self.path)
-        
+        self.files=self.importation(self.path)        
         self.img_surface=self.build_img('surface.im7')
         self.img_surface=cv2.convertScaleAbs(self.img_surface,alpha=(255.0/4095.0))
-        self.mark_surface()
-        
         self.img_background=self.build_img('background.im7')
-        self.iteration=False
-        self.list_sym_axis(self.files)
+        
+        if load:
+            self.iteration=True
+            self.load()
+        else:
+            self.iteration=False
+            self.mark_surface()
+            self.list_sym_axis(self.files)
+            self.iterate(self.files)
+            self.save()
 
     def importation(self,path):       
         files=[]  
@@ -56,8 +61,7 @@ class mixing_layer_detection():
         ret,img = cv2.threshold(img,245,255,cv2.THRESH_TRUNC) 
         return img
         
-    def img_processing(self,img,coordinate='Cartesian'):
-        
+    def img_processing(self,img,coordinate='Cartesian'):        
         img=self.remove_background(img,self.img_background)
         img=self.crop(img,self.z_surf)
         img=self.threshold(img)     
@@ -70,7 +74,15 @@ class mixing_layer_detection():
             l=int(len(polar_image)/2)
             return polar_image[:l,:]
     
-    def gradient(self,img):
+    def blur(self,img):
+        imgCopy = cv2.blur(img,(11,11))
+        #imgCopy=cv2.GaussianBlur(img,(51,51),0)
+        #imgCopy = cv2.bilateralFilter(img,9,75,75)
+        return imgCopy 
+    
+    def gradient(self,img,blur):
+        if blur:
+           img=self.blur(img)
         gx, gy = np.gradient(img)
         return np.sqrt(gx**2+gy**2)
 
@@ -143,7 +155,7 @@ class mixing_layer_detection():
         for file in files:
             img=self.build_img(file)
             img=self.img_processing(img,coordinate='Polar')
-            grad=self.gradient(img)
+            grad=self.gradient(img,blur='True')
             ext_lay=self.detect_ext_layer(img)
             self.ext_layer.append(ext_lay)
             int_lay=self.detect_int_layer(grad,ext_lay)
@@ -173,9 +185,6 @@ class mixing_layer_detection():
                 #img=np.transpose(img)
                 int_layer_filtered=scpsign.savgol_filter(self.int_layer[i],51,5)
                 th=np.linspace(0,np.pi,len(int_layer_filtered))
-                
-                
-                #x=np.arange(self.axis[i]-int(len(int_layer_filtered)/2),self.axis[i]+int(len(int_layer_filtered)/2))
                 ext_layer=self.ext_layer[i]
                 x_ext=ext_layer*np.cos(th)+self.axis[i]
                 x_int=int_layer_filtered*np.cos(th)+self.axis[i]
@@ -280,23 +289,149 @@ class mixing_layer_detection():
         return thickness
     
     def save(self):
-        data={"ext_layer":self.ext_layer,"int_layer":self.int_layer, "axis":self.axis}
+        data={"ext_layer":self.ext_layer,"int_layer":self.int_layer, "axis":self.axis, "surface":self.z_surf}
         pickle.dump(data,open( "save.p", "wb" ) )
         
     def load(self):
-        self.iteration=True
+        #self.iteration=True
         data=pickle.load( open( "save.p", "rb" ) )
         self.ext_layer=data["ext_layer"]
         self.int_layer=data["int_layer"]
         self.axis=data["axis"]
+        self.z_surf=data["surface"]
         
+            
+    def show_images(self):
+        global img
+        global win_name
+        self.modif_ext={}
+        self.modif_int={}
+        win_name='Images'
+        cv2.namedWindow(win_name, cv2.WINDOW_NORMAL)
+        cv2.resizeWindow(win_name, 960, 540)
+        cv2.moveWindow(win_name, 0, 0)
+        i=100
+        th=np.linspace(0,np.pi,len(p.ext_layer[i]))
+        x_ext=self.ext_layer[i]*np.cos(th)+self.axis[i]
+        x_int=self.int_layer[i]*np.cos(th)+self.axis[i] 
+        y_ext=self.ext_layer[i]*np.sin(th)
+        y_int=self.int_layer[i]*np.sin(th)  
+        ext_lay=np.array([[x_ext[k],y_ext[k]] for k in range(len(x_ext))],np.int32)
+        ext_lay= ext_lay.reshape((-1, 1, 2))
+        int_lay=np.array([[x_int[k],y_int[k]] for k in range(len(x_ext))],np.int32)
+        int_lay= int_lay.reshape((-1, 1, 2))
+        img=self.build_img(self.files[i])
+        img=self.img_processing(img,coordinate='Cartesian')
+        img=cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
+        thickness=5
+        isClosed=True
+        cv2.polylines(img,ext_lay, isClosed, (255, 0, 0), thickness)
+        cv2.polylines(img, int_lay, isClosed, (0, 0, 255), thickness)
+        cv2.imshow(win_name, img)
+        while True:
+            key = cv2.waitKey(0)
+            if key == 27: # 27 = esc
+                cv2.destroyAllWindows()
+                print('exit')
+                break
+            if key == ord('q'):
+                i-=1
+                img=self.build_img(self.files[i])
+                img=self.img_processing(img,coordinate='Cartesian')
+                img=cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
+                x_ext=self.ext_layer[i]*np.cos(th)+self.axis[i]
+                x_int=self.int_layer[i]*np.cos(th)+self.axis[i]
+                y_ext=self.ext_layer[i]*np.sin(th)
+                y_int=self.int_layer[i]*np.sin(th)               
+                ext_lay=np.array([[x_ext[k],y_ext[k]] for k in range(len(x_ext))],np.int32)
+                ext_lay= ext_lay.reshape((-1, 1, 2))
+                int_lay=np.array([[x_int[k],y_int[k]] for k in range(len(x_ext))],np.int32)
+                int_lay= int_lay.reshape((-1, 1, 2))
+                cv2.polylines(img, ext_lay, isClosed, (255, 0, 0), thickness)
+                cv2.polylines(img, int_lay, isClosed, (0, 0, 255), thickness)
+                cv2.imshow(win_name, img)
+                print('previous image')
+            if key == ord('d'):
+                i+=1
+                img=self.build_img(self.files[i])
+                img=self.img_processing(img,coordinate='Cartesian')
+                img=cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
+                x_ext=self.ext_layer[i]*np.cos(th)+self.axis[i]
+                x_int=self.int_layer[i]*np.cos(th)+self.axis[i]               
+                y_ext=self.ext_layer[i]*np.sin(th)
+                y_int=self.int_layer[i]*np.sin(th)                
+                ext_lay=np.array([[x_ext[k],y_ext[k]] for k in range(len(x_ext))],np.int32)
+                ext_lay= ext_lay.reshape((-1, 1, 2))
+                int_lay=np.array([[x_int[k],y_int[k]] for k in range(len(x_ext))],np.int32)
+                int_lay= int_lay.reshape((-1, 1, 2))
+                cv2.polylines(img, ext_lay, isClosed, (255, 0, 0), thickness)
+                cv2.polylines(img, int_lay, isClosed, (0, 0, 255), thickness)
+                cv2.imshow(win_name, img)
+                print('next image')
+            if key == ord('z'): #modification ext
+                font = cv2.FONT_HERSHEY_SIMPLEX
+                img=self.build_img(self.files[i])
+                img=self.img_processing(img,coordinate='Cartesian')
+                img=cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
+                cv2.putText(img, 'Modification couche externe', (100,1000), font,2, (0, 0, 0), thickness)
+                cv2.imshow(win_name, img)
+                mouseX,mouseY=(0,0)
+                self.new_ext_lay=[]
+                while True:
+                    cv2.setMouseCallback(win_name, self.point_surface_ext) 
+                    print((mouseX,mouseY))
+                    key2=cv2.waitKey(0)
+                    if key2==27:
+                        print('exit2')
+                        self.new_ext_lay.pop(0)
+                        self.new_ext_lay=np.array(self.new_ext_lay)
+                        break  
+                self.modif_ext[i]=self.new_ext_lay
+            if key == ord('s'): #modification int
+                font = cv2.FONT_HERSHEY_SIMPLEX
+                img=self.build_img(self.files[i])
+                img=self.img_processing(img,coordinate='Cartesian')
+                img=cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
+                cv2.putText(img, 'Modification couche interne', (100,1000), font,2, (0, 0, 0), thickness)
+                cv2.imshow(win_name, img)
+                mouseX,mouseY=(0,0)
+                self.new_int_lay=[]
+                while True:
+                    cv2.setMouseCallback(win_name, self.point_surface_int)                     
+                    print((mouseX,mouseY))
+                    key2=cv2.waitKey(0)
+                    if key2==27:
+                        print('exit2')
+                        self.new_int_lay.pop(0)
+                        self.new_int_lay=np.array(self.new_int_lay)
+                        break
+                self.modif_int[i]=self.new_int_lay
+                
+    def point_surface_int(self,event, x, y, flags, params):
+        global mouseX , mouseY
+        thickness=10
+        if event == cv2.EVENT_LBUTTONDOWN:
+            mouseX, mouseY= (x,y)
+            self.new_int_lay.append([np.sqrt(mouseX**2+mouseY**2),np.arctan2(mouseY,mouseX)])
+            cv2.circle(img,(mouseX,mouseY),5,(0,0,255),thickness)
+            cv2.imshow(win_name, img)
+
+    def point_surface_ext(self,event, x, y, flags, params):
+        global mouseX , mouseY
+        thickness=10
+        if event == cv2.EVENT_LBUTTONDOWN:
+            mouseX, mouseY= (x,y)
+            self.new_ext_lay.append([np.sqrt(mouseX**2+mouseY**2),np.arctan2(mouseY,mouseX)])
+            cv2.circle(img,(mouseX,mouseY),5,(0,0,255),thickness)
+            cv2.imshow(win_name, img)        
         
 # =============================================================================
                
 if __name__ == "__main__":
-    #path='E:\Documents\ENS\M2\Stage\image_processing\data_0406\\test'
-    path='E:\Documents\ENS\M2\Stage\image_processing\data_0406\\data1'
-    p=mixing_layer_detection(path)
+    path='E:\Documents\ENS\M2\Stage\image_processing\\0405\\NaCl_25cm_115\\data'
+    #path='E:\Documents\ENS\M2\Stage\image_processing\\0405\\NaCl_25cm_Date=210504_2'
+    load=True
+    p=mixing_layer_detection(path,load)
     #p.iterate(p.files)
     #p.save()
     p.load()
@@ -309,29 +444,6 @@ if __name__ == "__main__":
     plt.show()
     
     
-    i=100
-    
-    r_ext, r_int=p.legendre_fit(i)
-    theta=np.arange(len(p.ext_layer[0]))
-    theta=np.linspace(0,np.pi,len(p.ext_layer[0]))
-    a,b,c=r_ext
-    R_ext=p.radius_legendre2(theta,a,b,c)
-    x_ext=R_ext*np.cos(theta)
-    y_ext=R_ext*np.sin(theta)  
-    a,b,c=r_int
-    R_int=p.radius_legendre2(theta,a,b,c)
-    
-    img=p.build_img(p.files[i])
-    img=p.img_processing(img,coordinate='Polar')
-    
-    plt.imshow(np.transpose(img))
-    plt.plot(p.ext_layer[i])
-    plt.plot(p.int_layer[i])
-    plt.show()
-    plt.imshow(np.transpose(img))
-    plt.plot(R_ext)
-    plt.plot(R_int)
-    plt.show()
-
+ 
                     
         
